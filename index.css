@@ -1,0 +1,72 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------- Basis ---------- */
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: #fafaf9;              /* stone-50 */
+  color: #292524;                  /* stone-800 */
+  -webkit-font-smoothing: antialiased;
+}
+* { -webkit-tap-highlight-color: transparent; }
+
+/* Safe-Area für Notch-Geräte */
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.safe-top { padding-top: env(safe-area-inset-top); }
+
+/* ---------- Dark Mode ----------
+   Wir überschreiben gezielt die genutzten Tailwind-Farbklassen, damit die
+   bestehende Utility-Struktur unverändert bleibt und trotzdem alles dunkel wird. */
+html.dark { color-scheme: dark; }
+.dark body { background: #0c0a09; color: #ececeb; }
+
+.dark .bg-stone-50 { background-color: #0c0a09 !important; }
+.dark .bg-white { background-color: #1c1917 !important; }
+.dark .bg-stone-100 { background-color: #292524 !important; }
+
+.dark .border-stone-100 { border-color: #242020 !important; }
+.dark .border-stone-200 { border-color: #2c2825 !important; }
+.dark .border-stone-300 { border-color: #44403c !important; }
+
+.dark .text-stone-900 { color: #f5f5f4 !important; }
+.dark .text-stone-800 { color: #ececeb !important; }
+.dark .text-stone-700 { color: #dcd9d6 !important; }
+.dark .text-stone-600 { color: #cbc7c2 !important; }
+.dark .text-stone-500 { color: #a8a29e !important; }
+.dark .text-stone-400 { color: #8a827b !important; }
+.dark .text-stone-300 { color: #6b635c !important; }
+.dark .placeholder-stone-300::placeholder { color: #6b635c !important; }
+
+/* Akzent-Chips auf dunklem Grund */
+.dark .bg-emerald-50 { background-color: rgba(16,185,129,.14) !important; }
+.dark .bg-amber-100 { background-color: rgba(245,158,11,.16) !important; }
+.dark .bg-amber-50 { background-color: rgba(245,158,11,.12) !important; }
+.dark .bg-sky-100 { background-color: rgba(56,189,248,.16) !important; }
+.dark .bg-rose-100 { background-color: rgba(244,63,94,.16) !important; }
+.dark .bg-rose-50 { background-color: rgba(244,63,94,.12) !important; }
+
+.dark .text-emerald-800 { color: #6ee7b7 !important; }
+.dark .text-emerald-700 { color: #59d9a4 !important; }
+.dark .text-amber-800 { color: #fcd34d !important; }
+.dark .text-amber-700 { color: #fbbf24 !important; }
+.dark .text-sky-800 { color: #7dd3fc !important; }
+.dark .text-rose-700 { color: #fda4af !important; }
+.dark .text-rose-500 { color: #fb7185 !important; }
+
+.dark .border-emerald-200 { border-color: rgba(16,185,129,.35) !important; }
+.dark .border-emerald-300 { border-color: rgba(16,185,129,.5) !important; }
+
+.dark .hover\:bg-stone-100:hover { background-color: #292524 !important; }
+.dark .hover\:bg-rose-50:hover { background-color: rgba(244,63,94,.14) !important; }
+.dark .hover\:bg-emerald-50:hover { background-color: rgba(16,185,129,.14) !important; }
+
+/* Formularelemente im Dark Mode */
+.dark input, .dark textarea, .dark select { color: #ececeb; background-color: transparent; }
+.dark select option { background: #1c1917; color: #ececeb; }
+.dark input[type="date"]::-webkit-calendar-picker-indicator { filter: invert(0.8); }
+
+/* dünne Scrollbars */
+* { scrollbar-width: thin; }
