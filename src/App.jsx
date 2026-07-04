@@ -1,0 +1,961 @@
+import React, { useState, useEffect, useRef } from "react";
+import {
+  Plus, Trash2, MapPin, Camera, Mountain, Utensils, Hotel as HotelIcon,
+  Landmark, Eye, ChevronLeft, Calendar, CalendarRange, Wallet, X, Compass,
+  Sun, Moon, CloudRain, Clock, Car, Inbox, Download, Upload, Copy, Check,
+  ChevronDown, ChevronUp, Info, Bed, Ticket, ShoppingBag, GripVertical,
+  Briefcase, Train, Plane, ExternalLink, Lightbulb, Eraser, MapPinned
+} from "lucide-react";
+import { loadState, saveState } from "./db.js";
+import { getSuggestions, suggestPacking } from "./data/suggestions.js";
+
+/* ════════════════════════ Konstanten & Helfer ════════════════════════ */
+
+const CATEGORIES = [
+  { key: "sehenswuerdigkeit", label: "Sehenswürdigkeit", icon: Landmark },
+  { key: "fotospot", label: "Fotospot", icon: Camera },
+  { key: "aussicht", label: "Aussichtspunkt", icon: Eye },
+  { key: "wanderung", label: "Wandertour", icon: Mountain },
+  { key: "restaurant", label: "Restaurant", icon: Utensils },
+  { key: "hotel", label: "Unterkunft", icon: HotelIcon },
+];
+const catByKey = (k) => CATEGORIES.find((c) => c.key === k) || CATEGORIES[0];
+
+const COST_CATS = [
+  { key: "anfahrt", label: "Anfahrt", icon: Car },
+  { key: "unterkunft", label: "Unterkunft", icon: Bed },
+  { key: "essen", label: "Essen", icon: Utensils },
+  { key: "aktivitaet", label: "Aktivitäten", icon: Ticket },
+  { key: "sonstiges", label: "Sonstiges", icon: ShoppingBag },
+];
+const costCatByKey = (k) => COST_CATS.find((c) => c.key === k) || COST_CATS[4];
+const KAT_TO_COST = { wanderung: "aktivitaet", restaurant: "essen", hotel: "unterkunft", sehenswuerdigkeit: "aktivitaet", fotospot: "aktivitaet", aussicht: "aktivitaet" };
+
+const PRIORITIES = [
+  { key: "must", label: "Must-see", tone: "bg-rose-100 text-rose-700" },
+  { key: "wenn", label: "Wenn Zeit", tone: "bg-stone-100 text-stone-500" },
+];
+
+const WEATHER = {
+  any: { label: "Egal", icon: Calendar, chip: "bg-stone-100 text-stone-600" },
+  sun: { label: "Schönwetter", icon: Sun, chip: "bg-amber-100 text-amber-800" },
+  rain: { label: "Schlechtwetter", icon: CloudRain, chip: "bg-sky-100 text-sky-800" },
+};
+
+const COUNTRIES = [
+  { key: "Deutschland", regions: ["Bayern", "München", "Allgäu", "Schwarzwald", "Bodensee", "Harz", "Sächsische Schweiz", "Berchtesgadener Land", "Nordsee", "Ostsee", "Rügen", "Berlin", "Hamburg", "Mosel", "Rheintal"] },
+  { key: "Österreich", regions: ["Tirol", "Zillertal", "Ötztal", "Stubaital", "Salzburger Land", "Salzburg", "Kärnten", "Steiermark", "Vorarlberg", "Wien", "Wachau", "Achensee"] },
+  { key: "Schweiz", regions: ["Graubünden", "Engadin", "Wallis", "Zermatt", "Berner Oberland", "Interlaken", "Tessin", "Luzern / Vierwaldstättersee", "Zürich", "Jungfrau-Region"] },
+  { key: "Italien", regions: ["Südtirol", "Dolomiten", "Gardasee", "Comer See", "Toskana", "Amalfiküste", "Ligurien / Cinque Terre", "Rom", "Venedig", "Florenz", "Sizilien", "Sardinien"] },
+  { key: "Spanien", regions: ["Mallorca", "Teneriffa", "Gran Canaria", "Lanzarote", "Fuerteventura", "La Palma", "Ibiza", "Andalusien", "Barcelona / Katalonien", "Costa Brava", "Madrid", "Valencia"] },
+  { key: "Portugal", regions: ["Algarve", "Lissabon", "Porto / Douro", "Madeira", "Azoren", "Sintra"] },
+  { key: "Frankreich", regions: ["Provence", "Côte d'Azur", "Elsass", "Paris", "Bretagne", "Normandie", "Korsika", "Französische Alpen", "Loiretal"] },
+  { key: "Griechenland", regions: ["Kreta", "Rhodos", "Santorini", "Korfu", "Kos", "Naxos", "Athen", "Chalkidiki", "Zakynthos"] },
+  { key: "Niederlande", regions: ["Amsterdam", "Zeeland", "Texel", "Nordseeküste", "Rotterdam", "Den Haag"] },
+];
+const countryByKey = (k) => COUNTRIES.find((c) => c.key === k);
+const regionLabel = (t) => [t.region, t.land].filter(Boolean).join(", ");
+
+const uid = () =>
+  typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : "id-" + Date.now() + "-" + Math.round(Math.random() * 1e6);
+
+const isValidISO = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+const todayISO = () => new Date().toISOString().slice(0, 10);
+
+const fmtDate = (s) => { if (!s) return ""; const d = new Date(s + "T00:00:00"); return isNaN(d) ? "" : d.toLocaleDateString("de-DE", { weekday: "short", day: "2-digit", month: "2-digit" }); };
+const fmtDateFull = (s) => { if (!s) return ""; const d = new Date(s + "T00:00:00"); return isNaN(d) ? "" : d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit", year: "numeric" }); };
+const fmtRange = (t) => t.start && t.end ? `${fmtDateFull(t.start)} – ${fmtDateFull(t.end)}` : t.start ? `ab ${fmtDateFull(t.start)}` : "kein Datum";
+const weekdayName = (iso) => { const d = new Date(iso + "T00:00:00"); return isNaN(d) ? "" : d.toLocaleDateString("de-DE", { weekday: "long" }); };
+
+const addDays = (iso, n) => { const d = new Date(iso + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const dateDiff = (a, b) => Math.round((new Date(b + "T00:00:00Z") - new Date(a + "T00:00:00Z")) / 86400000);
+const datesBetween = (start, end) => { if (!start || !end) return []; const out = []; let cur = start, guard = 0; while (cur <= end && guard < 400) { out.push(cur); cur = addDays(cur, 1); guard++; } return out; };
+
+const eur = (n) => (Number(n) || 0).toLocaleString("de-DE", { minimumFractionDigits: 0, maximumFractionDigits: 0 }) + " €";
+
+const allItems = (t) => t.items || [];
+const planTotal = (t) => allItems(t).reduce((s, i) => s + (Number(i.kosten) || 0), 0);
+const istTotal = (t) => allItems(t).reduce((s, i) => s + (Number(i.kostenIst) || 0), 0);
+
+const mapsUrl = (q, region) => "https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent([q, region].filter(Boolean).join(", "));
+const dirUrl = (from, to, region) => "https://www.google.com/maps/dir/?api=1&origin=" + encodeURIComponent([from, region].filter(Boolean).join(", ")) + "&destination=" + encodeURIComponent([to, region].filter(Boolean).join(", "));
+const ddmmyyyy = (iso) => { if (!isValidISO(iso)) return ""; const [y, m, d] = iso.split("-"); return `${d}.${m}.${y}`; };
+const bahnUrl = (von, nach, iso, time = "08:00") => "https://reiseauskunft.bahn.de/bin/query.exe/dn?start=1&S=" + encodeURIComponent(von || "") + "&Z=" + encodeURIComponent(nach || "") + (isValidISO(iso) ? "&date=" + encodeURIComponent(ddmmyyyy(iso)) + "&time=" + encodeURIComponent(time) : "");
+const AIRLINES = [
+  { key: "lufthansa", label: "Lufthansa", url: "https://www.lufthansa.com/de/de/flight-search" },
+  { key: "eurowings", label: "Eurowings", url: "https://www.eurowings.com/de/booking/flights.html" },
+  { key: "tuifly", label: "TUI fly", url: "https://www.tuifly.com/de/flug/fluege-buchen.html" },
+];
+
+const VALID_KATS = CATEGORIES.map((c) => c.key);
+const VALID_W = ["sun", "rain", "any"];
+const VALID_PRIO = ["must", "wenn"];
+
+const mkItem = (s, extra = {}) => ({
+  id: uid(),
+  kategorie: VALID_KATS.includes(s.kategorie) ? s.kategorie : "sehenswuerdigkeit",
+  name: s.name || "Punkt", gebiet: s.gebiet || "", info: s.info || "", notiz: "",
+  mapsSuche: s.maps_suche || s.name || "", kostenHinweis: s.kosten_ca || "", kosten: null, kostenIst: null,
+  prio: VALID_PRIO.includes(s.prio) ? s.prio : null, zeit: s.zeit || "", fahrzeit: s.fahrzeit || "",
+  season: s.saison || "", weather: VALID_W.includes(s.wetter) ? s.wetter : "any", ...extra,
+});
+
+/* sichere Datumsverschiebung: alle Tage/Items um delta verschieben */
+function shiftTripByDays(trip, delta) {
+  const start = addDays(trip.start, delta);
+  const end = isValidISO(trip.end) ? addDays(trip.end, delta) : trip.end;
+  const items = (trip.items || []).map((i) => (i.day && isValidISO(i.day) ? { ...i, day: addDays(i.day, delta) } : i));
+  const days = {};
+  Object.entries(trip.days || {}).forEach(([d, meta]) => { days[isValidISO(d) ? addDays(d, delta) : d] = meta; });
+  return { start, end, items, days };
+}
+
+/* ════════════════════════ UI-Bausteine ════════════════════════ */
+
+function Pill({ children, className = "bg-stone-100 text-stone-600" }) {
+  return <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${className}`}>{children}</span>;
+}
+function PrimaryButton({ children, onClick, className = "", disabled }) {
+  return <button onClick={onClick} disabled={disabled} className={`inline-flex items-center justify-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 disabled:opacity-50 ${className}`}>{children}</button>;
+}
+function GhostButton({ children, onClick, className = "", disabled }) {
+  return <button onClick={onClick} disabled={disabled} className={`inline-flex items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-medium text-stone-700 transition hover:border-emerald-300 hover:text-emerald-800 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 disabled:opacity-50 ${className}`}>{children}</button>;
+}
+function IconBtn({ children, onClick, label, tone = "text-stone-400 hover:bg-emerald-50 hover:text-emerald-700" }) {
+  return <button onClick={onClick} aria-label={label} title={label} className={`rounded-lg p-1.5 transition ${tone}`}>{children}</button>;
+}
+function Field({ label, children }) {
+  return <label className="block"><span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-stone-400">{label}</span>{children}</label>;
+}
+const inputCls = "w-full rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none";
+
+function ThemeToggle() {
+  const [dark, setDark] = useState(() => typeof document !== "undefined" && document.documentElement.classList.contains("dark"));
+  const toggle = () => { const n = !dark; setDark(n); document.documentElement.classList.toggle("dark", n); try { localStorage.setItem("up-theme", n ? "dark" : "light"); } catch (e) {} };
+  return <IconBtn onClick={toggle} label={dark ? "Hell" : "Dunkel"}>{dark ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}</IconBtn>;
+}
+
+/* ════════════════════════ Hauptkomponente ════════════════════════ */
+
+export default function App() {
+  const [data, setData] = useState({ trips: [] });
+  const [ready, setReady] = useState(false);
+  const [activeId, setActiveId] = useState(null);
+
+  useEffect(() => { loadState().then((d) => { setData(d); setReady(true); }); }, []);
+
+  const save = (next) => { setData(next); saveState(next); };
+  const activeTrip = data.trips.find((t) => t.id === activeId) || null;
+  const updateTrip = (id, patch) => save({ ...data, trips: data.trips.map((t) => (t.id === id ? { ...t, ...patch } : t)) });
+
+  const createTrip = () => {
+    const t = { id: uid(), name: "Neue Reise", region: "", land: "", anreiseart: "", von: "", nach: "", hinweise: "", auto: { km: "", preis: 1.8, verbrauch: 9 }, stay: { name: "", adresse: "", checkin: "", checkout: "" }, start: "", end: "", items: [], days: {}, packing: [] };
+    save({ ...data, trips: [t, ...data.trips] });
+    setActiveId(t.id);
+  };
+  const duplicateTrip = (id) => {
+    const t = data.trips.find((x) => x.id === id); if (!t) return;
+    const clone = JSON.parse(JSON.stringify(t));
+    clone.id = uid(); clone.name = (t.name || "Reise") + " (Kopie)";
+    clone.items = (clone.items || []).map((it) => ({ ...it, id: uid() }));
+    clone.packing = (clone.packing || []).map((p) => ({ ...p, id: uid() }));
+    save({ ...data, trips: [clone, ...data.trips] });
+  };
+  const deleteTrip = (id) => {
+    if (!window.confirm("Diese Reise wirklich löschen?")) return;
+    save({ ...data, trips: data.trips.filter((t) => t.id !== id) });
+    if (activeId === id) setActiveId(null);
+  };
+  const exportAll = () => {
+    try {
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a"); a.href = url; a.download = "urlaubsplaner-backup.json"; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) { window.alert("Export fehlgeschlagen."); }
+  };
+  const importAll = (file) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const parsed = JSON.parse(reader.result);
+        const trips = Array.isArray(parsed.trips) ? parsed.trips : (Array.isArray(parsed) ? parsed : null);
+        if (!trips) { window.alert("Datei nicht erkannt."); return; }
+        const withIds = trips.map((t) => ({ ...t, id: uid(), items: (t.items || []).map((it) => ({ ...it, id: uid() })), packing: (t.packing || []).map((p) => ({ ...p, id: uid() })) }));
+        save({ ...data, trips: [...withIds, ...data.trips] });
+        window.alert(withIds.length + " Reise(n) importiert.");
+      } catch (e) { window.alert("Import fehlgeschlagen: ungültige Datei."); }
+    };
+    reader.readAsText(file);
+  };
+
+  if (!ready) return <div className="flex min-h-screen items-center justify-center bg-stone-50 text-stone-500">Lädt …</div>;
+
+  return (
+    <div className="min-h-screen bg-stone-50 text-stone-800">
+      <div className="safe-top mx-auto w-full max-w-2xl px-4 pb-24 pt-6">
+        {activeTrip ? (
+          <TripView trip={activeTrip} onBack={() => setActiveId(null)} onChange={(patch) => updateTrip(activeTrip.id, patch)} onDelete={() => deleteTrip(activeTrip.id)} onDuplicate={() => duplicateTrip(activeTrip.id)} />
+        ) : (
+          <TripList trips={data.trips} onOpen={setActiveId} onCreate={createTrip} onDelete={deleteTrip} onDuplicate={duplicateTrip} onExportAll={exportAll} onImportAll={importAll} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════ Reise-Liste ════════════════════════ */
+
+function TripList({ trips, onOpen, onCreate, onDelete, onDuplicate, onExportAll, onImportAll }) {
+  return (
+    <div>
+      <header className="mb-6 flex items-start justify-between">
+        <div>
+          <div className="mb-1 flex items-center gap-2 text-emerald-700"><Compass className="h-5 w-5" /><span className="text-xs font-semibold uppercase tracking-widest">Urlaubsplaner</span></div>
+          <h1 className="text-2xl font-bold tracking-tight text-stone-900">Deine Reisen</h1>
+          <p className="mt-1 text-sm text-stone-500">Tag für Tag planen – Spots, Budget, Packliste, Anreise. Offline nutzbar.</p>
+        </div>
+        <ThemeToggle />
+      </header>
+
+      <PrimaryButton onClick={onCreate} className="mb-6 w-full"><Plus className="h-4 w-4" /> Neue Reise anlegen</PrimaryButton>
+
+      {trips.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-8 text-center"><Mountain className="mx-auto mb-3 h-8 w-8 text-stone-300" /><p className="text-sm text-stone-500">Noch keine Reise. Leg oben deine erste an.</p></div>
+      ) : (
+        <ul className="space-y-3">
+          {[...trips].sort((a, b) => {
+            const av = isValidISO(a.start), bv = isValidISO(b.start);
+            if (av && bv) return a.start < b.start ? -1 : a.start > b.start ? 1 : 0;
+            if (av) return -1;
+            if (bv) return 1;
+            return 0;
+          }).map((t) => {
+            const days = datesBetween(t.start, t.end);
+            const planned = allItems(t).filter((i) => i.kategorie !== "kosten" && i.day).length;
+            const pool = allItems(t).filter((i) => i.kategorie !== "kosten" && !i.day).length;
+            return (
+              <li key={t.id}>
+                <div className="w-full rounded-2xl border border-stone-200 bg-white p-4 shadow-sm transition hover:border-emerald-300 hover:shadow-md">
+                  <div className="flex items-start justify-between gap-3">
+                    <button onClick={() => onOpen(t.id)} className="min-w-0 flex-1 text-left">
+                      <h2 className="truncate text-lg font-semibold text-stone-900">{t.name || "Ohne Titel"}</h2>
+                      {regionLabel(t) && <p className="mt-0.5 flex items-center gap-1 truncate text-sm text-stone-500"><MapPin className="h-3.5 w-3.5 shrink-0" /> {regionLabel(t)}</p>}
+                    </button>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <IconBtn onClick={() => onDuplicate(t.id)} label="Duplizieren"><Copy className="h-4 w-4" /></IconBtn>
+                      <IconBtn onClick={() => onDelete(t.id)} label="Löschen" tone="text-stone-300 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-4 w-4" /></IconBtn>
+                    </div>
+                  </div>
+                  <button onClick={() => onOpen(t.id)} className="mt-3 flex w-full flex-wrap items-center gap-2 text-left">
+                    <Pill><Calendar className="h-3 w-3" /> {fmtRange(t)}{days.length ? ` · ${days.length} Tg.` : ""}</Pill>
+                    <Pill className="bg-amber-100 text-amber-800"><Wallet className="h-3 w-3" /> {eur(planTotal(t))}</Pill>
+                    <Pill className="bg-emerald-50 text-emerald-700">{planned} verplant{pool ? ` · ${pool} offen` : ""}</Pill>
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <section className="mt-8 rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+        <h3 className="mb-1 text-sm font-bold uppercase tracking-wide text-stone-800">Backup</h3>
+        <p className="mb-3 text-xs text-stone-500">Alle Reisen als Datei sichern oder wiederherstellen.</p>
+        <div className="flex flex-wrap gap-2">
+          <GhostButton onClick={onExportAll}><Download className="h-4 w-4 text-emerald-600" /> Exportieren</GhostButton>
+          <label className="inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-stone-200 bg-white px-3 py-2 text-sm font-medium text-stone-700 transition hover:border-emerald-300 hover:text-emerald-800">
+            <Upload className="h-4 w-4 text-emerald-600" /> Importieren
+            <input type="file" accept="application/json" className="hidden" onChange={(e) => { const f = e.target.files && e.target.files[0]; if (f) onImportAll(f); e.target.value = ""; }} />
+          </label>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/* ════════════════════════ Land / Region ════════════════════════ */
+
+function LocationPicker({ trip, onChange }) {
+  const known = countryByKey(trip.land);
+  const [customLand, setCustomLand] = useState(Boolean(trip.land) && !known);
+  const [customRegion, setCustomRegion] = useState(Boolean(trip.region) && Boolean(known) && !known.regions.includes(trip.region));
+  const regions = known ? known.regions : [];
+  const onLand = (val) => { if (val === "__other__") { setCustomLand(true); setCustomRegion(false); onChange({ land: "", region: "" }); } else { setCustomLand(false); setCustomRegion(false); onChange({ land: val, region: "" }); } };
+  const onRegion = (val) => { if (val === "__other__") { setCustomRegion(true); onChange({ region: "" }); } else { setCustomRegion(false); onChange({ region: val }); } };
+  const landVal = customLand ? "__other__" : (known ? trip.land : "");
+  const regionVal = customRegion ? "__other__" : (regions.includes(trip.region) ? trip.region : "");
+  return (
+    <div className="grid grid-cols-1 gap-3">
+      <Field label="Land">
+        <select value={landVal} onChange={(e) => onLand(e.target.value)} className={inputCls}>
+          <option value="">Land wählen …</option>
+          {COUNTRIES.map((c) => <option key={c.key} value={c.key}>{c.key}</option>)}
+          <option value="__other__">Anderes Land …</option>
+        </select>
+        {customLand && <input value={trip.land || ""} onChange={(e) => onChange({ land: e.target.value })} placeholder="Land eingeben" className={inputCls + " mt-2"} />}
+      </Field>
+      <Field label="Region / Insel / Stadt">
+        {known ? (
+          <select value={regionVal} onChange={(e) => onRegion(e.target.value)} className={inputCls}>
+            <option value="">Auswählen …</option>
+            {regions.map((r) => <option key={r} value={r}>{r}</option>)}
+            <option value="__other__">Andere …</option>
+          </select>
+        ) : (
+          <input value={trip.region || ""} onChange={(e) => onChange({ region: e.target.value })} placeholder="z. B. Tirol, Teneriffa" className={inputCls} />
+        )}
+        {known && customRegion && <input value={trip.region || ""} onChange={(e) => onChange({ region: e.target.value })} placeholder="Region / Ort eingeben" className={inputCls + " mt-2"} />}
+      </Field>
+    </div>
+  );
+}
+
+/* ════════════════════════ Reise-Detail ════════════════════════ */
+
+function TripView({ trip, onBack, onChange, onDelete, onDuplicate }) {
+  const [tab, setTab] = useState("tage");
+  const items = allItems(trip);
+
+  const addItem = (item) => onChange({ items: [...items, item] });
+  const addItems = (arr) => onChange({ items: [...items, ...arr] });
+  const removeItem = (id) => onChange({ items: items.filter((i) => i.id !== id) });
+  const patchItem = (id, patch) => onChange({ items: items.map((i) => (i.id === id ? { ...i, ...patch } : i)) });
+  const applyUpdates = (m) => onChange({ items: items.map((i) => (m[i.id] ? { ...i, ...m[i.id] } : i)) });
+  const updateDays = (days) => onChange({ days });
+
+  /* sichere Datums-Änderung */
+  const handleStart = (newStart) => {
+    if (!isValidISO(newStart)) { onChange({ start: newStart }); return; }
+    if (isValidISO(trip.start)) {
+      const delta = dateDiff(trip.start, newStart);
+      if (delta !== 0) { onChange(shiftTripByDays(trip, delta)); return; }
+      onChange({ start: newStart });
+    } else {
+      const patch = { start: newStart };
+      if (!isValidISO(trip.end) || newStart > trip.end) patch.end = newStart;
+      onChange(patch);
+    }
+  };
+  const handleEnd = (newEnd) => {
+    if (!isValidISO(newEnd)) { onChange({ end: newEnd }); return; }
+    let start = trip.start;
+    if (isValidISO(start) && newEnd < start) start = newEnd;
+    const valid = new Set(datesBetween(start, newEnd));
+    const nextItems = (trip.items || []).map((i) => (i.day && i.kategorie !== "kosten" && !valid.has(i.day) ? { ...i, day: null, order: 0 } : i));
+    onChange({ start, end: newEnd, items: nextItems });
+  };
+
+  /* Drag & Drop */
+  const [drag, setDrag] = useState(null);
+  const [dropTarget, setDropTarget] = useState(null);
+  const dropRef = useRef(null);
+  useEffect(() => { dropRef.current = dropTarget; }, [dropTarget]);
+  useEffect(() => {
+    if (!drag) return;
+    const onMove = (e) => {
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const zone = el && el.closest ? el.closest("[data-drop-day]") : null;
+      if (zone) setDropTarget({ day: zone.getAttribute("data-drop-day"), index: Number(zone.getAttribute("data-drop-index")) });
+    };
+    const onUp = () => {
+      const t = dropRef.current;
+      if (t && drag) { const patches = reorderForMove(items, drag.id, t.day, t.index); if (Object.keys(patches).length) applyUpdates(patches); }
+      setDrag(null); setDropTarget(null);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => { window.removeEventListener("pointermove", onMove); window.removeEventListener("pointerup", onUp); window.removeEventListener("pointercancel", onUp); };
+  }, [drag, items]);
+
+  const dayList = datesBetween(trip.start, trip.end);
+  const tabs = [
+    { key: "tage", label: "Tage", icon: Calendar },
+    { key: "plan", label: "Übersicht", icon: CalendarRange },
+    { key: "pool", label: "Ideen", icon: Inbox },
+    { key: "budget", label: "Budget", icon: Wallet },
+    { key: "packen", label: "Packen", icon: Briefcase },
+  ];
+
+  return (
+    <div>
+      <div className="mb-4 flex items-center justify-between">
+        <button onClick={onBack} className="inline-flex items-center gap-1 text-sm font-medium text-stone-500 hover:text-emerald-700"><ChevronLeft className="h-4 w-4" /> Alle Reisen</button>
+        <div className="flex items-center gap-1">
+          <ThemeToggle />
+          <ExportButton trip={trip} />
+          <IconBtn onClick={onDuplicate} label="Duplizieren"><Copy className="h-4 w-4" /></IconBtn>
+          <IconBtn onClick={onDelete} label="Löschen" tone="text-stone-300 hover:bg-rose-50 hover:text-rose-500"><Trash2 className="h-4 w-4" /></IconBtn>
+        </div>
+      </div>
+
+      <section className="mb-4 rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+        <input value={trip.name} onChange={(e) => onChange({ name: e.target.value })} placeholder="Name der Reise" className="w-full bg-transparent text-2xl font-bold tracking-tight text-stone-900 placeholder-stone-300 focus:outline-none" />
+        <div className="mt-3 grid grid-cols-1 gap-3">
+          <LocationPicker trip={trip} onChange={onChange} />
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Von"><input type="date" value={trip.start} onChange={(e) => handleStart(e.target.value)} className={inputCls} /></Field>
+            <Field label="Bis"><input type="date" value={trip.end} onChange={(e) => handleEnd(e.target.value)} className={inputCls} /></Field>
+          </div>
+          <p className="text-xs text-stone-400">Datum verschieben ist sicher: Änderst du „Von", wandert die ganze Reise mit – nichts geht verloren.</p>
+        </div>
+      </section>
+
+      <AnreiseCard trip={trip} onChange={onChange} />
+      <StayCard trip={trip} onChange={onChange} />
+
+      <section className="mb-4 flex items-center justify-between rounded-2xl bg-emerald-700 px-4 py-3 text-white shadow-sm">
+        <div className="flex items-center gap-2"><Wallet className="h-5 w-5 text-emerald-200" /><span className="text-sm font-medium text-emerald-100">Kosten</span></div>
+        <div className="text-right">
+          <span className="text-xl font-bold tabular-nums">{eur(planTotal(trip))}</span>
+          <span className="ml-2 text-xs text-emerald-200">geplant</span>
+          {istTotal(trip) > 0 && <div className="text-xs text-emerald-200">Ist: {eur(istTotal(trip))}</div>}
+        </div>
+      </section>
+
+      <div className="mb-4 grid grid-cols-5 gap-1 rounded-xl bg-stone-100 p-1">
+        {tabs.map((t) => {
+          const Icon = t.icon; const active = tab === t.key;
+          return <button key={t.key} onClick={() => setTab(t.key)} className={`flex flex-col items-center gap-1 rounded-lg py-2 text-xs font-medium transition ${active ? "bg-white text-emerald-700 shadow-sm" : "text-stone-500 hover:text-stone-700"}`}><Icon className="h-4 w-4" /> {t.label}</button>;
+        })}
+      </div>
+
+      {tab === "tage" && <DaysView trip={trip} dayList={dayList} items={items} onAdd={addItem} onAddMany={addItems} onRemove={removeItem} onPatch={patchItem} onApply={applyUpdates} onUpdateDays={updateDays} dragId={drag ? drag.id : null} dropTarget={dropTarget} onDragStart={(id) => setDrag({ id })} />}
+      {tab === "plan" && <Overview trip={trip} dayList={dayList} onGoDays={() => setTab("tage")} />}
+      {tab === "pool" && <PoolView trip={trip} items={items} onAdd={addItem} onRemove={removeItem} onPatch={patchItem} />}
+      {tab === "budget" && <BudgetView trip={trip} items={items} onAdd={addItem} onRemove={removeItem} onPatch={patchItem} />}
+      {tab === "packen" && <PackingView trip={trip} onChange={onChange} />}
+
+      <p className="mt-6 text-center text-xs text-stone-400">Alles lokal gespeichert · offline nutzbar</p>
+    </div>
+  );
+}
+
+function reorderForMove(items, id, targetDay, targetIndex) {
+  const moving = items.find((i) => i.id === id); if (!moving) return {};
+  const day = targetDay === "null" ? null : targetDay;
+  const sourceDay = moving.day || null;
+  const targetList = items.filter((i) => i.id !== id && i.day === day && i.kategorie !== "kosten").sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const idx = Math.max(0, Math.min(targetIndex, targetList.length));
+  targetList.splice(idx, 0, moving);
+  const patches = {};
+  targetList.forEach((it, k) => { patches[it.id] = { day, order: k }; });
+  if (sourceDay !== day) {
+    const srcList = items.filter((i) => i.id !== id && i.day === sourceDay && i.kategorie !== "kosten").sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    srcList.forEach((it, k) => { patches[it.id] = { ...(patches[it.id] || {}), order: k }; });
+  }
+  return patches;
+}
+
+/* ════════════════════════ Anreise ════════════════════════ */
+
+function AnreiseCard({ trip, onChange }) {
+  const [open, setOpen] = useState(Boolean(trip.anreiseart));
+  const art = trip.anreiseart || "";
+  const setArt = (a) => onChange({ anreiseart: art === a ? "" : a });
+  const modes = [{ key: "zug", label: "Zug", icon: Train }, { key: "auto", label: "Auto", icon: Car }, { key: "flug", label: "Flug", icon: Plane }];
+  const auto = trip.auto || { km: "", preis: 1.8, verbrauch: 9 };
+  const setAuto = (patch) => onChange({ auto: { ...auto, ...patch } });
+  const km = Number(auto.km) || 0, preis = Number(auto.preis) || 0, verbrauch = Number(auto.verbrauch) || 0;
+  const spritEinfach = (km / 100) * verbrauch * preis;
+  const spritHinRueck = spritEinfach * 2;
+  const addSpritToBudget = () => {
+    if (!spritHinRueck) return;
+    const it = { id: uid(), kategorie: "kosten", costCat: "anfahrt", name: `Sprit (Auto, ${km} km × 2)`, gebiet: "", info: "", mapsSuche: "", kostenHinweis: "", kosten: Math.round(spritHinRueck), kostenIst: null, day: null };
+    onChange({ items: [...(trip.items || []), it] });
+  };
+  const headIcon = art === "flug" ? <Plane className="h-4 w-4 text-emerald-700" /> : art === "auto" ? <Car className="h-4 w-4 text-emerald-700" /> : <Train className="h-4 w-4 text-emerald-700" />;
+
+  return (
+    <section className="mb-4 rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+      <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between">
+        <span className="inline-flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-stone-800">{headIcon} Anreise{art ? "" : " (optional)"}</span>
+        {open ? <ChevronUp className="h-4 w-4 text-stone-400" /> : <ChevronDown className="h-4 w-4 text-stone-400" />}
+      </button>
+      {open && (
+        <div className="mt-3 space-y-3">
+          <div className="flex gap-2">
+            {modes.map((m) => { const Icon = m.icon; const active = art === m.key; return (
+              <button key={m.key} onClick={() => setArt(m.key)} className={`inline-flex flex-1 items-center justify-center gap-2 rounded-xl border px-3 py-2 text-sm font-medium transition ${active ? "border-emerald-300 bg-emerald-50 text-emerald-800" : "border-stone-200 bg-white text-stone-600 hover:border-emerald-300"}`}><Icon className="h-4 w-4" /> {m.label}</button>
+            ); })}
+          </div>
+          {art && (
+            <div className="grid grid-cols-2 gap-2">
+              <Field label={art === "flug" ? "Ab (Flughafen/Stadt)" : "Von"}><input value={trip.von || ""} onChange={(e) => onChange({ von: e.target.value })} placeholder={art === "flug" ? "z. B. Hannover" : "z. B. Celle"} className={inputCls} /></Field>
+              <Field label={art === "flug" ? "Ziel" : "Nach"}><input value={trip.nach || ""} onChange={(e) => onChange({ nach: e.target.value })} placeholder={art === "flug" ? "z. B. Teneriffa" : "z. B. Gardasee"} className={inputCls} /></Field>
+            </div>
+          )}
+          {art === "auto" && (
+            <div className="space-y-3 rounded-xl bg-stone-50 p-3">
+              <a href={dirUrl(trip.von, trip.nach, "")} target="_blank" rel="noreferrer" className="flex items-center justify-between rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm font-medium text-stone-700 hover:border-emerald-300 hover:text-emerald-800"><span className="inline-flex items-center gap-2"><MapPin className="h-4 w-4 text-emerald-600" /> Route & km auf Google Maps</span><ExternalLink className="h-4 w-4 text-stone-400" /></a>
+              <div className="grid grid-cols-3 gap-2">
+                <Field label="km (einfach)"><input type="number" inputMode="decimal" value={auto.km} onChange={(e) => setAuto({ km: e.target.value })} placeholder="750" className={inputCls} /></Field>
+                <Field label="€/Liter"><input type="number" inputMode="decimal" value={auto.preis} onChange={(e) => setAuto({ preis: e.target.value })} className={inputCls} /></Field>
+                <Field label="l/100 km"><input type="number" inputMode="decimal" value={auto.verbrauch} onChange={(e) => setAuto({ verbrauch: e.target.value })} className={inputCls} /></Field>
+              </div>
+              <div className="flex items-center justify-between rounded-lg bg-white px-3 py-2 text-sm"><span className="text-stone-500">Spritkosten</span><span className="text-right"><span className="font-semibold tabular-nums text-stone-900">{eur(spritEinfach)}</span><span className="text-stone-400"> einfach · </span><span className="font-semibold tabular-nums text-stone-900">{eur(spritHinRueck)}</span><span className="text-stone-400"> hin/zurück</span></span></div>
+              <GhostButton onClick={addSpritToBudget} disabled={!spritHinRueck} className="w-full"><Plus className="h-4 w-4 text-emerald-600" /> Hin/zurück ins Budget (Anfahrt)</GhostButton>
+              <p className="text-xs text-stone-400">km über den Maps-Link ablesen · Spritpreis & Verbrauch frei änderbar.</p>
+            </div>
+          )}
+          {art === "zug" && (
+            <div className="space-y-2">
+              <a href={bahnUrl(trip.von, trip.nach, trip.start)} target="_blank" rel="noreferrer" className="flex items-center justify-between rounded-xl border border-stone-200 px-3 py-2.5 text-sm font-medium text-stone-700 transition hover:border-emerald-300 hover:text-emerald-800"><span className="inline-flex items-center gap-2"><Train className="h-4 w-4 text-emerald-600" /> Hinfahrt auf bahn.de{trip.start ? ` · ${fmtDate(trip.start)}` : ""}</span><ExternalLink className="h-4 w-4 text-stone-400" /></a>
+              <a href={bahnUrl(trip.nach, trip.von, trip.end)} target="_blank" rel="noreferrer" className="flex items-center justify-between rounded-xl border border-stone-200 px-3 py-2.5 text-sm font-medium text-stone-700 transition hover:border-emerald-300 hover:text-emerald-800"><span className="inline-flex items-center gap-2"><Train className="h-4 w-4 text-emerald-600" /> Rückfahrt auf bahn.de{trip.end ? ` · ${fmtDate(trip.end)}` : ""}</span><ExternalLink className="h-4 w-4 text-stone-400" /></a>
+              <p className="text-xs text-stone-400">Öffnet die Bahn-Auskunft mit Strecke und Datum – echte Zeiten & Preise dort.</p>
+            </div>
+          )}
+          {art === "flug" && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-stone-400">Flugsuche bei deinen Airlines</p>
+              <div className="grid grid-cols-1 gap-2">
+                {AIRLINES.map((a) => <a key={a.key} href={a.url} target="_blank" rel="noreferrer" className="flex items-center justify-between rounded-xl border border-stone-200 px-3 py-2.5 text-sm font-medium text-stone-700 transition hover:border-emerald-300 hover:text-emerald-800"><span className="inline-flex items-center gap-2"><Plane className="h-4 w-4 text-emerald-600" /> {a.label}</span><ExternalLink className="h-4 w-4 text-stone-400" /></a>)}
+              </div>
+              <p className="text-xs text-stone-400">{[trip.von, trip.nach].filter(Boolean).join(" → ") || "Strecke"} und Datum auf der Airline-Seite eingeben.</p>
+            </div>
+          )}
+          {trip.hinweise && <div className="flex items-start gap-2 rounded-xl bg-emerald-50 px-3 py-2 text-sm text-stone-700"><Info className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" /><span className="whitespace-pre-wrap">{trip.hinweise}</span></div>}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ════════════════════════ Unterkunft ════════════════════════ */
+
+function StayCard({ trip, onChange }) {
+  const stay = trip.stay || { name: "", adresse: "", checkin: "", checkout: "" };
+  const [open, setOpen] = useState(Boolean(stay.name));
+  const setStay = (patch) => onChange({ stay: { ...stay, ...patch } });
+  return (
+    <section className="mb-4 rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+      <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between">
+        <span className="inline-flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-stone-800"><Bed className="h-4 w-4 text-emerald-700" /> Unterkunft{stay.name ? "" : " (optional)"}</span>
+        <span className="flex items-center gap-2">{stay.name && !open && <span className="max-w-32 truncate text-xs text-stone-500">{stay.name}</span>}{open ? <ChevronUp className="h-4 w-4 text-stone-400" /> : <ChevronDown className="h-4 w-4 text-stone-400" />}</span>
+      </button>
+      {open && (
+        <div className="mt-3 space-y-3">
+          <Field label="Name"><input value={stay.name} onChange={(e) => setStay({ name: e.target.value })} placeholder="z. B. Hotel Schwarzbrunn" className={inputCls} /></Field>
+          <Field label="Adresse"><input value={stay.adresse} onChange={(e) => setStay({ adresse: e.target.value })} placeholder="Straße, Ort" className={inputCls} /></Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Check-in"><input type="date" value={stay.checkin} onChange={(e) => setStay({ checkin: e.target.value })} className={inputCls} /></Field>
+            <Field label="Check-out"><input type="date" value={stay.checkout} onChange={(e) => setStay({ checkout: e.target.value })} className={inputCls} /></Field>
+          </div>
+          {(stay.name || stay.adresse) && (
+            <a href={mapsUrl(stay.adresse || stay.name, regionLabel(trip))} target="_blank" rel="noreferrer" className="flex items-center justify-between rounded-xl border border-stone-200 px-3 py-2.5 text-sm font-medium text-stone-700 transition hover:border-emerald-300 hover:text-emerald-800"><span className="inline-flex items-center gap-2"><MapPinned className="h-4 w-4 text-emerald-600" /> Unterkunft auf Google Maps</span><ExternalLink className="h-4 w-4 text-stone-400" /></a>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/* ════════════════════════ Tab: Tage ════════════════════════ */
+
+function DaysView({ trip, dayList, items, onAdd, onAddMany, onRemove, onPatch, onApply, onUpdateDays, dragId, dropTarget, onDragStart }) {
+  if (!trip.start || !trip.end) return <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-8 text-center text-sm text-stone-500">Trag oben „Von" und „Bis" ein, dann erscheinen hier deine Tage.</div>;
+  return (
+    <div className="space-y-4">
+      {dayList.map((date, idx) => (
+        <DayCard key={date} trip={trip} date={date} index={idx + 1} items={items.filter((i) => i.day === date)} onAdd={onAdd} onAddMany={onAddMany} onRemove={onRemove} onPatch={onPatch} onApply={onApply} onUpdateDays={onUpdateDays} dragId={dragId} dropTarget={dropTarget} onDragStart={onDragStart} />
+      ))}
+    </div>
+  );
+}
+
+function DropZone({ day, index, active, dragging }) {
+  const h = dragging ? "my-1 h-7" : "h-0";
+  const look = active ? "bg-emerald-400" : dragging ? "border border-dashed border-emerald-300 bg-emerald-50" : "";
+  return <div data-drop-day={day === null ? "null" : day} data-drop-index={index} className={`rounded transition-all ${h} ${look}`} />;
+}
+
+function DayCard({ trip, date, index, items, onAdd, onAddMany, onRemove, onPatch, onApply, onUpdateDays, dragId, dropTarget, onDragStart }) {
+  const [open, setOpen] = useState(true);
+  const meta = (trip.days || {})[date] || {};
+  const region = regionLabel(trip);
+  const setMeta = (patch) => onUpdateDays({ ...(trip.days || {}), [date]: { ...meta, ...patch } });
+  const sorted = [...items].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+  const dayCost = items.reduce((s, i) => s + (Number(i.kosten) || 0), 0);
+  const dragging = Boolean(dragId);
+  const isActive = (i) => dropTarget && dropTarget.day === date && dropTarget.index === i;
+
+  const move = (i, dir) => { const arr = [...sorted]; const j = i + dir; if (j < 0 || j >= arr.length) return; [arr[i], arr[j]] = [arr[j], arr[i]]; const m = {}; arr.forEach((it, k) => { m[it.id] = { order: k }; }); onApply(m); };
+  const duplicateDay = () => {
+    const base = sorted.length;
+    const copies = sorted.map((it, k) => ({ ...it, id: uid(), order: base + k }));
+    if (copies.length) onAddMany(copies);
+  };
+  const clearDay = () => {
+    if (!sorted.length) return;
+    if (!window.confirm(`Alle ${sorted.length} Punkte an ${fmtDate(date)} nach „Ideen" verschieben?`)) return;
+    const m = {}; sorted.forEach((it) => { m[it.id] = { day: null, order: 0 }; }); onApply(m);
+  };
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-stone-200 bg-white shadow-sm">
+      <div className="flex items-center justify-between gap-2 border-b border-stone-100 bg-stone-50 px-4 py-3">
+        <button onClick={() => setOpen((o) => !o)} className="flex min-w-0 items-center gap-3 text-left">
+          <span className="flex h-9 w-9 shrink-0 flex-col items-center justify-center rounded-lg bg-emerald-700 text-white"><span className="text-xs font-medium leading-none opacity-80">Tag</span><span className="text-sm font-bold leading-none">{index}</span></span>
+          <div className="min-w-0"><p className="font-semibold text-stone-900">{fmtDate(date)}</p><p className="truncate text-xs text-stone-500">{meta.title || `${items.length} Programmpunkte`}{dayCost ? ` · ${eur(dayCost)}` : ""}</p></div>
+        </button>
+        <div className="flex items-center gap-1">
+          <WeatherToggle value={meta.weather || "any"} onChange={(w) => setMeta({ weather: w })} />
+          <button onClick={() => setOpen((o) => !o)} className="rounded-lg p-1.5 text-stone-400 hover:bg-stone-100">{open ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
+        </div>
+      </div>
+      {open && (
+        <div className="p-3">
+          <div className="mb-3 flex items-center gap-2">
+            <input value={meta.title || ""} onChange={(e) => setMeta({ title: e.target.value })} placeholder="Motto des Tages (optional)" className="min-w-0 flex-1 rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" />
+            <IconBtn onClick={duplicateDay} label="Tag duplizieren"><Copy className="h-4 w-4" /></IconBtn>
+            <IconBtn onClick={clearDay} label="Tag leeren" tone="text-stone-400 hover:bg-rose-50 hover:text-rose-500"><Eraser className="h-4 w-4" /></IconBtn>
+          </div>
+          {sorted.length === 0 && !dragging && <p className="px-1 py-2 text-sm text-stone-400">Noch nichts geplant. Unten hinzufügen, im Tab „Ideen" zuweisen oder per Griff hierher ziehen.</p>}
+          <div>
+            <DropZone day={date} index={0} active={isActive(0)} dragging={dragging} />
+            {sorted.map((it, i) => (
+              <React.Fragment key={it.id}>
+                <PlannedItem item={it} region={region} prev={sorted[i - 1]} isFirst={i === 0} isLast={i === sorted.length - 1} isDragged={dragId === it.id} onDragStart={onDragStart} onUp={() => move(i, -1)} onDown={() => move(i, 1)} onRemove={() => onRemove(it.id)} onPatch={(p) => onPatch(it.id, p)} onUnassign={() => onPatch(it.id, { day: null, order: 0 })} />
+                <DropZone day={date} index={i + 1} active={isActive(i + 1)} dragging={dragging} />
+              </React.Fragment>
+            ))}
+          </div>
+          <DayAdder onAdd={(item) => onAdd({ ...item, day: date, order: sorted.length })} />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function WeatherToggle({ value, onChange }) {
+  const order = ["any", "sun", "rain"];
+  const cur = WEATHER[value]; const Icon = cur.icon;
+  return <button onClick={() => onChange(order[(order.indexOf(value) + 1) % order.length])} className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium ${cur.chip}`} title="Wetter-Eignung umschalten"><Icon className="h-3.5 w-3.5" /> {cur.label}</button>;
+}
+
+function PlannedItem({ item, region, prev, isFirst, isLast, isDragged, onDragStart, onUp, onDown, onRemove, onPatch, onUnassign }) {
+  const [open, setOpen] = useState(false);
+  const CatIcon = catByKey(item.kategorie).icon;
+  const prio = PRIORITIES.find((p) => p.key === item.prio);
+  return (
+    <li className="list-none rounded-xl border border-stone-200 bg-stone-50" style={{ opacity: isDragged ? 0.4 : 1 }}>
+      {prev && (
+        <div className="flex items-center gap-2 px-3 pt-2 text-xs text-stone-400"><Car className="h-3.5 w-3.5" />{item.fahrzeit ? <span>{item.fahrzeit} ab „{prev.name || "vorher"}"</span> : <span className="italic">Fahrzeit?</span>}<a href={dirUrl(prev.name, item.name, region)} target="_blank" rel="noreferrer" className="text-emerald-600 hover:underline">Route ›</a></div>
+      )}
+      <div className="flex items-start gap-2 p-3">
+        <button onPointerDown={(e) => { e.preventDefault(); e.stopPropagation(); try { e.currentTarget.setPointerCapture(e.pointerId); } catch (_) {} onDragStart(item.id); }} className="mt-0.5 cursor-grab touch-none rounded p-1 text-stone-300 hover:text-stone-500" style={{ touchAction: "none" }} aria-label="Ziehen zum Verschieben"><GripVertical className="h-4 w-4" /></button>
+        <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700"><CatIcon className="h-4 w-4" /></span>
+        <button onClick={() => setOpen((o) => !o)} className="min-w-0 flex-1 text-left">
+          <div className="flex flex-wrap items-center gap-1.5"><span className="font-semibold text-stone-900">{item.name || "(unbenannt)"}</span>{prio && <span className={`rounded-full px-1.5 py-0.5 text-xs font-semibold ${prio.tone}`}>{prio.label}</span>}{item.notiz && <Info className="h-3.5 w-3.5 text-stone-400" />}</div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-stone-500">{item.zeit && <span className="inline-flex items-center gap-0.5"><Clock className="h-3 w-3" />{item.zeit}</span>}{item.gebiet && <span>{item.gebiet}</span>}{item.info && <span className="text-stone-400">· {item.info}</span>}</div>
+        </button>
+        <div className="flex shrink-0 flex-col items-center gap-0.5"><button onClick={onUp} disabled={isFirst} className="rounded p-0.5 text-stone-300 hover:text-stone-600 disabled:opacity-30" aria-label="hoch"><ChevronUp className="h-4 w-4" /></button><button onClick={onDown} disabled={isLast} className="rounded p-0.5 text-stone-300 hover:text-stone-600 disabled:opacity-30" aria-label="runter"><ChevronDown className="h-4 w-4" /></button></div>
+        <div className="flex shrink-0 items-center gap-1">{item.kosten != null && item.kosten !== "" && <Pill className="bg-amber-100 text-amber-800">{eur(item.kosten)}</Pill>}<a href={mapsUrl(item.mapsSuche || item.name, region)} target="_blank" rel="noreferrer" className="rounded-lg p-1.5 text-stone-400 hover:bg-emerald-50 hover:text-emerald-700" aria-label="Maps"><MapPin className="h-4 w-4" /></a></div>
+      </div>
+      {open && (
+        <div className="grid grid-cols-2 gap-2 border-t border-stone-200 p-3">
+          <input value={item.name} onChange={(e) => onPatch({ name: e.target.value })} placeholder="Name" className={inputCls + " col-span-2"} />
+          <input value={item.zeit || ""} onChange={(e) => onPatch({ zeit: e.target.value })} placeholder="Uhrzeit (z. B. 08:30)" className={inputCls} />
+          <input value={item.fahrzeit || ""} onChange={(e) => onPatch({ fahrzeit: e.target.value })} placeholder="Fahrzeit (z. B. 25 Min)" className={inputCls} />
+          <input value={item.gebiet || ""} onChange={(e) => onPatch({ gebiet: e.target.value })} placeholder="Ort / Gebiet" className={inputCls} />
+          <select value={item.prio || ""} onChange={(e) => onPatch({ prio: e.target.value || null })} className={inputCls}><option value="">Priorität …</option>{PRIORITIES.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}</select>
+          <input value={item.info || ""} onChange={(e) => onPatch({ info: e.target.value })} placeholder="Info / Eckdaten" className={inputCls + " col-span-2"} />
+          <textarea value={item.notiz || ""} onChange={(e) => onPatch({ notiz: e.target.value })} rows={2} placeholder="Notizen (Reservierung, Gedanken …)" className="col-span-2 w-full resize-none rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" />
+          <label className="block"><span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-stone-400">Kosten geplant</span><input type="number" inputMode="decimal" value={item.kosten ?? ""} onChange={(e) => onPatch({ kosten: e.target.value === "" ? null : Number(e.target.value) })} placeholder="€" className={inputCls} /></label>
+          <label className="block"><span className="mb-1 block text-xs font-semibold uppercase tracking-wide text-stone-400">Kosten tatsächlich</span><input type="number" inputMode="decimal" value={item.kostenIst ?? ""} onChange={(e) => onPatch({ kostenIst: e.target.value === "" ? null : Number(e.target.value) })} placeholder="€" className={inputCls} /></label>
+          {item.season && <div className="col-span-2 flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {item.season}</div>}
+          <input value={item.season || ""} onChange={(e) => onPatch({ season: e.target.value })} placeholder="Saison-Hinweis (optional)" className={inputCls + " col-span-2"} />
+          <div className="col-span-2 flex items-center justify-between pt-1"><button onClick={onUnassign} className="inline-flex items-center gap-1 text-xs font-medium text-stone-500 hover:text-emerald-700"><Inbox className="h-3.5 w-3.5" /> zurück zu Ideen</button><button onClick={onRemove} className="inline-flex items-center gap-1 text-xs font-medium text-rose-500 hover:text-rose-600"><Trash2 className="h-3.5 w-3.5" /> löschen</button></div>
+        </div>
+      )}
+    </li>
+  );
+}
+
+function DayAdder({ onAdd }) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [kat, setKat] = useState("sehenswuerdigkeit");
+  const add = () => { if (!name.trim()) return; onAdd(mkItem({ kategorie: kat, name: name.trim(), maps_suche: name.trim() })); setName(""); setOpen(false); };
+  if (!open) return <button onClick={() => setOpen(true)} className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-stone-400 hover:text-emerald-700"><Plus className="h-3.5 w-3.5" /> Programmpunkt</button>;
+  return (
+    <div className="mt-2 flex items-center gap-2">
+      <select value={kat} onChange={(e) => setKat(e.target.value)} className="rounded-lg border border-stone-200 bg-white px-2 py-2 text-sm focus:border-emerald-400 focus:outline-none">{CATEGORIES.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</select>
+      <input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Name" className="min-w-0 flex-1 rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" />
+      <button onClick={add} className="shrink-0 rounded-lg bg-emerald-700 p-2 text-white hover:bg-emerald-800" aria-label="Hinzufügen"><Plus className="h-4 w-4" /></button>
+    </div>
+  );
+}
+
+/* ════════════════════════ Tab: Übersicht (Timeline) ════════════════════════ */
+
+function Overview({ trip, dayList, onGoDays }) {
+  if (!trip.start || !trip.end) return <div className="rounded-2xl border border-dashed border-stone-300 bg-white p-8 text-center text-sm text-stone-500">Setze zuerst Von und Bis.</div>;
+  const region = regionLabel(trip);
+  return (
+    <div className="space-y-3">
+      {dayList.map((date, idx) => {
+        const meta = (trip.days || {})[date] || {};
+        const its = allItems(trip).filter((i) => i.day === date && i.kategorie !== "kosten").sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+        const w = WEATHER[meta.weather || "any"]; const WI = w.icon;
+        const cost = its.reduce((s, i) => s + (Number(i.kosten) || 0), 0);
+        return (
+          <section key={date} className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+            <div className="mb-2 flex items-center justify-between">
+              <div className="flex items-center gap-2"><span className="flex h-7 w-7 flex-col items-center justify-center rounded-lg bg-emerald-700 text-xs font-bold text-white">{idx + 1}</span><div><p className="text-sm font-semibold text-stone-900">{fmtDate(date)}</p>{meta.title && <p className="text-xs text-stone-500">{meta.title}</p>}</div></div>
+              <div className="flex items-center gap-2">{meta.weather && meta.weather !== "any" && <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium ${w.chip}`}><WI className="h-3 w-3" />{w.label}</span>}{cost > 0 && <Pill className="bg-amber-100 text-amber-800">{eur(cost)}</Pill>}</div>
+            </div>
+            {its.length === 0 ? <p className="text-sm text-stone-400">— leer —</p> : (
+              <ol className="space-y-1">
+                {its.map((i) => (
+                  <li key={i.id} className="flex items-center gap-2 text-sm">
+                    <span className="w-12 shrink-0 tabular-nums text-xs text-stone-400">{i.zeit || "–"}</span>
+                    <span className="min-w-0 flex-1 truncate text-stone-700">{i.name}{i.gebiet ? <span className="text-stone-400"> · {i.gebiet}</span> : ""}</span>
+                    <a href={mapsUrl(i.mapsSuche || i.name, region)} target="_blank" rel="noreferrer" className="shrink-0 text-stone-300 hover:text-emerald-700" aria-label="Maps"><MapPin className="h-3.5 w-3.5" /></a>
+                  </li>
+                ))}
+              </ol>
+            )}
+          </section>
+        );
+      })}
+      <GhostButton onClick={onGoDays} className="w-full"><Calendar className="h-4 w-4 text-emerald-600" /> Zur Tagesplanung</GhostButton>
+    </div>
+  );
+}
+
+/* ════════════════════════ Tab: Ideen (kuratiert) ════════════════════════ */
+
+function PoolView({ trip, items, onAdd, onRemove, onPatch }) {
+  const match = getSuggestions(regionLabel(trip));
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-stone-500">Sammle Ideen und übernimm fertige Vorschläge. Per „zuweisen" wandern sie in die Tagesplanung.</p>
+      {!match && regionLabel(trip) && <div className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs text-amber-800"><Info className="mt-0.5 h-3.5 w-3.5 shrink-0" /> Für „{regionLabel(trip)}" gibt es noch keine fertige Vorschlagsliste – du kannst alles manuell hinzufügen.</div>}
+      {CATEGORIES.map((cat) => (
+        <PoolCategory key={cat.key} cat={cat} trip={trip} suggestions={match ? (match.data[cat.key] || []) : []} items={items.filter((i) => i.kategorie === cat.key && !i.day)} onAdd={onAdd} onRemove={onRemove} onPatch={onPatch} />
+      ))}
+    </div>
+  );
+}
+
+function PoolCategory({ cat, trip, suggestions, items, onAdd, onRemove, onPatch }) {
+  const Icon = cat.icon;
+  const [showSug, setShowSug] = useState(false);
+  const accept = (s) => onAdd(mkItem(s, { day: null, order: 0 }));
+  const addEmpty = () => onAdd({ id: uid(), kategorie: cat.key, name: "", gebiet: "", info: "", notiz: "", mapsSuche: "", kostenHinweis: "", kosten: null, kostenIst: null, prio: null, zeit: "", fahrzeit: "", season: "", weather: "any", day: null, order: 0 });
+  const takenNames = new Set((trip.items || []).map((i) => (i.name || "").toLowerCase()));
+  const freshSug = suggestions.filter((s) => !takenNames.has((s.name || "").toLowerCase()));
+  return (
+    <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700"><Icon className="h-4 w-4" /></span><div><h3 className="text-sm font-bold uppercase tracking-wide text-stone-800">{cat.label}en</h3><span className="text-xs text-stone-400">{items.length} offen</span></div></div>
+        {freshSug.length > 0 && <GhostButton onClick={() => setShowSug((v) => !v)}><Lightbulb className="h-4 w-4 text-emerald-600" /> Vorschläge ({freshSug.length})</GhostButton>}
+      </div>
+
+      {items.length > 0 && <ul className="mb-3 space-y-2">{items.map((it) => <PoolItem key={it.id} item={it} trip={trip} onRemove={() => onRemove(it.id)} onPatch={(p) => onPatch(it.id, p)} />)}</ul>}
+
+      {showSug && freshSug.length > 0 && (
+        <div className="mb-2 space-y-2 rounded-xl bg-emerald-50 p-2">
+          <p className="px-1 text-xs font-semibold uppercase tracking-wide text-emerald-700"><Lightbulb className="mr-1 inline h-3 w-3" /> Tippen zum Übernehmen</p>
+          {freshSug.map((s, i) => { const w = WEATHER[s.wetter] || WEATHER.any; const WI = w.icon; return (
+            <div key={i} className="rounded-lg border border-emerald-200 bg-white p-3">
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5"><p className="font-semibold text-stone-900">{s.name}</p>{s.wetter && s.wetter !== "any" && <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium ${w.chip}`}><WI className="h-3 w-3" />{w.label}</span>}</div>
+                  {s.gebiet && <p className="text-xs text-stone-500">{s.gebiet}</p>}
+                  {s.info && <p className="mt-1 text-sm text-stone-600">{s.info}</p>}
+                  {s.kosten_ca && <p className="mt-1 text-xs font-medium text-amber-700">{s.kosten_ca}</p>}
+                </div>
+                <button onClick={() => accept(s)} className="shrink-0 rounded-lg bg-emerald-700 p-1.5 text-white hover:bg-emerald-800" aria-label="Übernehmen"><Plus className="h-4 w-4" /></button>
+              </div>
+            </div>
+          ); })}
+        </div>
+      )}
+
+      <button onClick={addEmpty} className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-stone-400 hover:text-emerald-700"><Plus className="h-3.5 w-3.5" /> manuell hinzufügen</button>
+    </section>
+  );
+}
+
+function PoolItem({ item, trip, onRemove, onPatch }) {
+  const [open, setOpen] = useState(!item.name);
+  const dayList = datesBetween(trip.start, trip.end);
+  const w = WEATHER[item.weather || "any"]; const WI = w.icon;
+  return (
+    <li className="rounded-xl border border-stone-200 bg-stone-50 p-3">
+      <div className="flex items-start justify-between gap-2">
+        <button onClick={() => setOpen((o) => !o)} className="min-w-0 flex-1 text-left">
+          <div className="flex flex-wrap items-center gap-1.5"><span className="font-semibold text-stone-900">{item.name || "(unbenannt – tippen)"}</span>{item.weather && item.weather !== "any" && <span className={`inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-xs font-medium ${w.chip}`}><WI className="h-3 w-3" />{w.label}</span>}</div>
+          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-xs text-stone-500">{item.gebiet && <span>{item.gebiet}</span>}{item.info && <span className="text-stone-400">· {item.info}</span>}</div>
+        </button>
+        <div className="flex shrink-0 items-center gap-1">{item.kosten != null && item.kosten !== "" && <Pill className="bg-amber-100 text-amber-800">{eur(item.kosten)}</Pill>}<a href={mapsUrl(item.mapsSuche || item.name, regionLabel(trip))} target="_blank" rel="noreferrer" className="rounded-lg p-1.5 text-stone-400 hover:bg-emerald-50 hover:text-emerald-700" aria-label="Maps"><MapPin className="h-4 w-4" /></a><IconBtn onClick={onRemove} label="Entfernen" tone="text-stone-300 hover:bg-rose-50 hover:text-rose-500"><X className="h-4 w-4" /></IconBtn></div>
+      </div>
+      {dayList.length > 0 && (
+        <div className="mt-2 flex items-center gap-2"><span className="text-xs text-stone-400">Tag:</span><select value="" onChange={(e) => e.target.value && onPatch({ day: e.target.value, order: 999 })} className="rounded-lg border border-stone-200 bg-white px-2 py-1 text-xs focus:border-emerald-400 focus:outline-none"><option value="">zuweisen …</option>{dayList.map((d, i) => <option key={d} value={d}>Tag {i + 1} · {fmtDate(d)}</option>)}</select></div>
+      )}
+      {open && (
+        <div className="mt-3 grid grid-cols-2 gap-2 border-t border-stone-200 pt-3">
+          <input value={item.name} onChange={(e) => onPatch({ name: e.target.value })} placeholder="Name" className={inputCls} />
+          <input value={item.gebiet} onChange={(e) => onPatch({ gebiet: e.target.value })} placeholder="Ort / Gebiet" className={inputCls} />
+          <input value={item.info} onChange={(e) => onPatch({ info: e.target.value })} placeholder="Info / Eckdaten" className={inputCls + " col-span-2"} />
+          <div className="flex items-center gap-2"><input type="number" inputMode="decimal" value={item.kosten ?? ""} onChange={(e) => onPatch({ kosten: e.target.value === "" ? null : Number(e.target.value) })} placeholder="Kosten €" className="w-28 rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" />{item.kostenHinweis && <span className="text-xs text-stone-400">Tipp: {item.kostenHinweis}</span>}</div>
+          <select value={item.prio || ""} onChange={(e) => onPatch({ prio: e.target.value || null })} className={inputCls}><option value="">Priorität …</option>{PRIORITIES.map((p) => <option key={p.key} value={p.key}>{p.label}</option>)}</select>
+        </div>
+      )}
+    </li>
+  );
+}
+
+/* ════════════════════════ Tab: Budget (Soll/Ist) ════════════════════════ */
+
+function BudgetView({ trip, items, onAdd, onRemove, onPatch }) {
+  const [label, setLabel] = useState("");
+  const [amount, setAmount] = useState("");
+  const [ccat, setCcat] = useState("anfahrt");
+  const days = datesBetween(trip.start, trip.end).length;
+  const plan = planTotal(trip); const ist = istTotal(trip);
+  const lines = items.filter((i) => (i.kosten != null && i.kosten !== "") || (i.kostenIst != null && i.kostenIst !== ""));
+  const grouped = COST_CATS.map((c) => {
+    const own = lines.filter((i) => (i.kategorie === "kosten" ? i.costCat === c.key : KAT_TO_COST[i.kategorie] === c.key));
+    return { ...c, items: own, sum: own.reduce((s, i) => s + (Number(i.kosten) || 0), 0) };
+  });
+  const addLine = () => { if (!label.trim() && !amount) return; onAdd({ id: uid(), kategorie: "kosten", costCat: ccat, name: label.trim() || costCatByKey(ccat).label, gebiet: "", info: "", mapsSuche: "", kostenHinweis: "", kosten: amount === "" ? 0 : Number(amount), kostenIst: null, day: null }); setLabel(""); setAmount(""); };
+  const diff = ist - plan;
+
+  return (
+    <div className="space-y-4">
+      <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+        <div className="grid grid-cols-2 gap-3">
+          <div><p className="text-xs font-semibold uppercase tracking-wide text-stone-400">Geplant</p><p className="text-2xl font-bold tabular-nums text-stone-900">{eur(plan)}</p>{days > 0 && <p className="text-xs text-stone-400">{eur(plan / days)} / Tag</p>}</div>
+          <div><p className="text-xs font-semibold uppercase tracking-wide text-stone-400">Tatsächlich</p><p className="text-2xl font-bold tabular-nums text-stone-900">{eur(ist)}</p>{ist > 0 && <p className={`text-xs ${diff > 0 ? "text-rose-500" : "text-emerald-700"}`}>{diff > 0 ? "+" : ""}{eur(diff)} ggü. Plan</p>}</div>
+        </div>
+        <div className="mt-4 space-y-2">
+          {grouped.filter((g) => g.sum > 0).map((g) => { const Icon = g.icon; const pct = plan > 0 ? Math.round((g.sum / plan) * 100) : 0; return (
+            <div key={g.key}><div className="mb-0.5 flex items-center justify-between text-xs"><span className="inline-flex items-center gap-1 text-stone-600"><Icon className="h-3.5 w-3.5" />{g.label}</span><span className="tabular-nums text-stone-500">{eur(g.sum)} · {pct}%</span></div><div className="h-2 overflow-hidden rounded-full bg-stone-100"><div className="h-full rounded-full bg-emerald-600" style={{ width: pct + "%" }} /></div></div>
+          ); })}
+          {plan === 0 && ist === 0 && <p className="text-sm text-stone-400">Noch keine Kosten erfasst.</p>}
+        </div>
+      </section>
+
+      {grouped.map((g) => (
+        <section key={g.key} className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+          <div className="mb-2 flex items-center justify-between"><h3 className="inline-flex items-center gap-2 text-sm font-bold uppercase tracking-wide text-stone-800"><g.icon className="h-4 w-4 text-emerald-700" />{g.label}</h3><span className="text-sm font-semibold tabular-nums text-stone-500">{eur(g.sum)}</span></div>
+          {g.items.length === 0 ? <p className="text-sm text-stone-400">—</p> : (
+            <ul className="divide-y divide-stone-100">
+              {g.items.map((it) => (
+                <li key={it.id} className="py-2">
+                  <div className="mb-1 flex items-center justify-between gap-2"><p className="min-w-0 truncate text-sm text-stone-700">{it.name}{it.kategorie !== "kosten" && <span className="text-xs text-stone-400"> · {catByKey(it.kategorie).label}{it.day ? ` · ${fmtDate(it.day)}` : ""}</span>}</p>{it.kategorie === "kosten" && <IconBtn onClick={() => onRemove(it.id)} label="Löschen" tone="text-stone-300 hover:text-rose-500"><X className="h-4 w-4" /></IconBtn>}</div>
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-1 text-xs text-stone-400">Plan<input type="number" inputMode="decimal" value={it.kosten ?? ""} onChange={(e) => onPatch(it.id, { kosten: e.target.value === "" ? null : Number(e.target.value) })} className="w-20 rounded-lg border border-stone-200 bg-white px-2 py-1 text-right text-sm tabular-nums focus:border-emerald-400 focus:outline-none" />€</label>
+                    <label className="flex items-center gap-1 text-xs text-stone-400">Ist<input type="number" inputMode="decimal" value={it.kostenIst ?? ""} onChange={(e) => onPatch(it.id, { kostenIst: e.target.value === "" ? null : Number(e.target.value) })} className="w-20 rounded-lg border border-stone-200 bg-white px-2 py-1 text-right text-sm tabular-nums focus:border-emerald-400 focus:outline-none" />€</label>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      ))}
+
+      <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+        <h3 className="mb-2 text-sm font-bold uppercase tracking-wide text-stone-800">Posten hinzufügen</h3>
+        <div className="flex flex-wrap items-center gap-2">
+          <select value={ccat} onChange={(e) => setCcat(e.target.value)} className="rounded-lg border border-stone-200 bg-white px-2 py-2 text-sm focus:border-emerald-400 focus:outline-none">{COST_CATS.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}</select>
+          <input value={label} onChange={(e) => setLabel(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLine()} placeholder="Bezeichnung" className="min-w-0 flex-1 rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" />
+          <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addLine()} placeholder="€" className="w-24 rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" />
+          <button onClick={addLine} className="shrink-0 rounded-lg bg-amber-600 p-2 text-white hover:bg-amber-700" aria-label="Hinzufügen"><Plus className="h-4 w-4" /></button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+/* ════════════════════════ Tab: Packliste ════════════════════════ */
+
+function PackingView({ trip, onChange }) {
+  const list = trip.packing || [];
+  const [text, setText] = useState("");
+  const set = (next) => onChange({ packing: next });
+  const add = () => { if (!text.trim()) return; set([...list, { id: uid(), text: text.trim(), done: false }]); setText(""); };
+  const toggle = (id) => set(list.map((p) => (p.id === id ? { ...p, done: !p.done } : p)));
+  const remove = (id) => set(list.filter((p) => p.id !== id));
+  const clearDone = () => set(list.filter((p) => !p.done));
+  const suggest = () => { const existing = new Set(list.map((p) => (p.text || "").toLowerCase())); const toAdd = suggestPacking(trip).filter((s) => !existing.has(s.toLowerCase())).map((s) => ({ id: uid(), text: s, done: false })); set([...list, ...toAdd]); };
+  const done = list.filter((p) => p.done).length;
+  return (
+    <div className="space-y-4">
+      <section className="rounded-2xl border border-stone-200 bg-white p-4 shadow-sm">
+        <div className="mb-3 flex items-center justify-between"><div><h3 className="text-sm font-bold uppercase tracking-wide text-stone-800">Packliste</h3><span className="text-xs text-stone-400">{done}/{list.length} erledigt</span></div><GhostButton onClick={suggest}><Lightbulb className="h-4 w-4 text-emerald-600" /> Vorschlag</GhostButton></div>
+        {list.length === 0 ? <p className="py-2 text-sm text-stone-400">Noch nichts auf der Liste. Unten hinzufügen oder Vorschlag holen.</p> : (
+          <ul className="divide-y divide-stone-100">
+            {list.map((p) => (
+              <li key={p.id} className="flex items-center gap-3 py-2">
+                <button onClick={() => toggle(p.id)} className={`flex h-5 w-5 shrink-0 items-center justify-center rounded-md border ${p.done ? "border-emerald-600 bg-emerald-600 text-white" : "border-stone-300 bg-white text-transparent"}`} aria-label="abhaken">{p.done && <Check className="h-3.5 w-3.5" />}</button>
+                <span className={`flex-1 text-sm ${p.done ? "text-stone-400 line-through" : "text-stone-700"}`}>{p.text}</span>
+                <IconBtn onClick={() => remove(p.id)} label="Entfernen" tone="text-stone-300 hover:text-rose-500"><X className="h-4 w-4" /></IconBtn>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="mt-3 flex items-center gap-2"><input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && add()} placeholder="Eintrag hinzufügen" className="min-w-0 flex-1 rounded-lg border border-stone-200 bg-white px-3 py-2 text-sm focus:border-emerald-400 focus:outline-none" /><button onClick={add} className="shrink-0 rounded-lg bg-emerald-700 p-2 text-white hover:bg-emerald-800" aria-label="Hinzufügen"><Plus className="h-4 w-4" /></button></div>
+        {done > 0 && <button onClick={clearDone} className="mt-3 text-xs font-medium text-stone-400 hover:text-rose-500">Erledigte entfernen</button>}
+      </section>
+    </div>
+  );
+}
+
+/* ════════════════════════ Export (Text) ════════════════════════ */
+
+function buildExport(trip) {
+  const L = [];
+  L.push(`# ${trip.name || "Reise"}`);
+  L.push(`${regionLabel(trip) || ""}  ·  ${fmtRange(trip)}`.trim());
+  L.push(`Kosten geplant: ${eur(planTotal(trip))}${istTotal(trip) > 0 ? ` · tatsächlich: ${eur(istTotal(trip))}` : ""}`);
+  if (trip.anreiseart) { const al = trip.anreiseart === "flug" ? "Flug" : trip.anreiseart === "auto" ? "Auto" : "Zug"; L.push(`Anreise: ${al}${[trip.von, trip.nach].filter(Boolean).length ? " " + [trip.von, trip.nach].filter(Boolean).join(" → ") : ""}`); }
+  if (trip.stay && trip.stay.name) L.push(`Unterkunft: ${trip.stay.name}${trip.stay.adresse ? ", " + trip.stay.adresse : ""}`);
+  L.push("");
+  datesBetween(trip.start, trip.end).forEach((d, idx) => {
+    const meta = (trip.days || {})[d] || {};
+    const dItems = allItems(trip).filter((i) => i.day === d).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    const w = WEATHER[meta.weather || "any"];
+    L.push(`## Tag ${idx + 1} – ${fmtDateFull(d)}${meta.title ? `: ${meta.title}` : ""}${meta.weather && meta.weather !== "any" ? ` [${w.label}]` : ""}`);
+    if (dItems.length === 0) L.push("  (noch nichts geplant)");
+    dItems.forEach((i) => {
+      const bits = [i.zeit, i.name].filter(Boolean).join(" ");
+      const extra = [i.gebiet, i.info, i.prio ? PRIORITIES.find((p) => p.key === i.prio)?.label : "", i.kosten ? eur(i.kosten) : "", i.fahrzeit ? `Fahrt ${i.fahrzeit}` : "", i.season].filter(Boolean).join(" · ");
+      L.push(`  - ${bits}${extra ? ` (${extra})` : ""}`);
+      if (i.notiz) L.push(`      Notiz: ${i.notiz}`);
+    });
+    L.push("");
+  });
+  const pool = allItems(trip).filter((i) => i.kategorie !== "kosten" && !i.day);
+  if (pool.length) { L.push("## Ideen (noch nicht verplant)"); pool.forEach((i) => L.push(`  - ${i.name}${i.gebiet ? ` – ${i.gebiet}` : ""}`)); L.push(""); }
+  const packing = trip.packing || [];
+  if (packing.length) { L.push("## Packliste"); packing.forEach((p) => L.push(`  - [${p.done ? "x" : " "}] ${p.text}`)); L.push(""); }
+  return L.join("\n");
+}
+
+function ExportButton({ trip }) {
+  const [open, setOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const text = buildExport(trip);
+  const copy = async () => { try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch (e) {} };
+  return (
+    <>
+      <IconBtn onClick={() => setOpen(true)} label="Exportieren"><Download className="h-4 w-4" /></IconBtn>
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4" style={{ backgroundColor: "rgba(0,0,0,0.45)" }} onClick={() => setOpen(false)}>
+          <div className="w-full max-w-lg overflow-hidden rounded-t-2xl bg-white shadow-xl sm:rounded-2xl" style={{ maxHeight: "85vh" }} onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between border-b border-stone-100 px-4 py-3"><h3 className="font-semibold text-stone-900">Reise als Text</h3><IconBtn onClick={() => setOpen(false)} label="Schließen" tone="text-stone-400 hover:bg-stone-100"><X className="h-5 w-5" /></IconBtn></div>
+            <pre className="overflow-auto whitespace-pre-wrap bg-stone-50 p-4 text-xs text-stone-700" style={{ maxHeight: "55vh" }}>{text}</pre>
+            <div className="flex gap-2 border-t border-stone-100 p-3"><PrimaryButton onClick={copy} className="flex-1">{copied ? <><Check className="h-4 w-4" /> Kopiert</> : <><Copy className="h-4 w-4" /> Text kopieren</>}</PrimaryButton></div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
