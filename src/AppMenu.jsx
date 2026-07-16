@@ -11,6 +11,7 @@
 import React, { useState } from "react";
 import { Menu, X, LayoutGrid, Calendar, Globe2, Wallet, Compass } from "lucide-react";
 import { GROUPS } from "./ReiseTools.jsx";
+import Suche from "./Suche.jsx";
 
 const HOME = [
   { k: "reisen", label: "Reisen", Icon: Calendar },
@@ -42,7 +43,8 @@ export default function AppMenu({ homeTab, setHomeTab, toolKey, setToolKey }) {
           className="inline-flex items-center gap-1.5 rounded-lg border border-stone-200 bg-white px-3 py-1.5 text-sm font-medium text-stone-700 transition hover:border-emerald-300 hover:text-emerald-800 dark:border-stone-700 dark:bg-stone-900 dark:text-stone-200 dark:hover:border-emerald-700">
           {open ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />} Menü
         </button>
-        <div className="min-w-0 truncate text-sm text-stone-500 dark:text-stone-400">{label}</div>
+        <Suche onGo={(z) => { setHomeTab(z.homeTab); setTool(z.toolKey || null); setOpen(false); }} />
+        <div className="min-w-0 flex-1 truncate text-right text-sm text-stone-500 dark:text-stone-400">{label}</div>
       </div>
 
       {open && (
