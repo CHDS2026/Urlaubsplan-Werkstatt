@@ -62,11 +62,10 @@ export default function Startseite({ onGo, trips, ideen, onOpenTrip, onCreate })
     <div className="space-y-4">
       {/* HERO — deine nächste/laufende Reise */}
       <section className="overflow-hidden rounded-2xl border border-emerald-300/40 bg-gradient-to-br from-emerald-600 to-emerald-800 p-5 text-white shadow-sm dark:border-emerald-800/60 dark:from-emerald-800 dark:to-emerald-950">
-        <div className="text-xs font-medium uppercase tracking-wide text-emerald-100/90">{gruss()}</div>
         {naechste ? (
-          <button onClick={() => onOpenTrip && onOpenTrip(naechste.id)} className="mt-1 block w-full text-left">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-100/80">{cd.laeuft ? "Aktuelle Reise" : "Nächste Reise"}</div>
-            <div className="mt-0.5 text-2xl font-bold leading-tight tracking-tight">{naechste.name || "Reise"}</div>
+          <button onClick={() => onOpenTrip && onOpenTrip(naechste.id)} className="block w-full text-left">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-100/90">{gruss()} · {cd.laeuft ? "Aktuelle Reise" : "Nächste Reise"}</div>
+            <div className="mt-1 text-2xl font-bold leading-tight tracking-tight">{naechste.name || "Reise"}</div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-emerald-50">
               {(naechste.region || naechste.land) && <span className="inline-flex items-center gap-1"><MapPin className="h-3.5 w-3.5" /> {[naechste.region, naechste.land].filter(Boolean).join(", ")}</span>}
               <span className="inline-flex items-center gap-1"><Calendar className="h-3.5 w-3.5" /> {fmtSpanne(naechste)}</span>
@@ -77,8 +76,9 @@ export default function Startseite({ onGo, trips, ideen, onOpenTrip, onCreate })
             </div>
           </button>
         ) : (
-          <div className="mt-1">
-            <div className="text-2xl font-bold leading-tight tracking-tight">Bereit für die nächste Reise?</div>
+          <div>
+            <div className="text-xs font-medium uppercase tracking-wide text-emerald-100/90">{gruss()}</div>
+            <div className="mt-1 text-2xl font-bold leading-tight tracking-tight">Bereit für die nächste Reise?</div>
             <p className="mt-1 text-sm text-emerald-50">Plane sie Tag für Tag – Programm, Karte, Budget, Packliste.</p>
             <button onClick={neueReise} className="mt-3 inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2 text-sm font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50"><Plus className="h-4 w-4" /> Neue Reise</button>
           </div>
