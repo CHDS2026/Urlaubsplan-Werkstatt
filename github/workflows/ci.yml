@@ -6,11 +6,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: npm }
-      - run: npm ci
+        with:
+          node-version: 20
+      - run: npm install
+      - run: npm install --no-save esbuild
       - name: Syntax-Check (esbuild transform, alle Quellen)
-        run: >
-          npx --yes esbuild $(find src -type f \( -name '*.js' -o -name '*.jsx' \))
-          --loader:.jsx=jsx --loader:.js=jsx --format=esm --target=es2020 --outdir=/tmp/tc > /dev/null
+        run: |
+          npx --yes esbuild $(find src -type f \( -name '*.js' -o -name '*.jsx' \)) --loader:.jsx=jsx --loader:.js=jsx --format=esm --target=es2020 --outdir=/tmp/tc >/dev/null
       - name: Render-Smoke-Test (fängt TDZ / schwarzen Bildschirm)
         run: node scripts/smoke.mjs
