@@ -29,15 +29,29 @@ function useEffect(){} function useLayoutEffect(){} function useContext(){return
 function useReducer(r,i){return[(typeof i==='function'?i():i),function(){}];} function useId(){return'id';}
 const Fragment={__frag:true};
 function createElement(type,props){var c=Array.prototype.slice.call(arguments,2);var p=Object.assign({},props);if(c.length)p.children=c.length===1?c[0]:c;return{__el:true,type:type,props:p};}
+function isKlasse(t){return t.prototype&&(t.prototype.isReactComponent||typeof t.prototype.render==='function');}
 function render(node){
   if(node==null||typeof node!=='object')return;
   if(Array.isArray(node)){for(var i=0;i<node.length;i++)render(node[i]);return;}
   if(!node.__el)return;
   var t=node.type,p=node.props||{};
-  if(typeof t==='function'){var o;try{o=t(p);}catch(e){if(!e.__comp)e.__comp=(t.name||'Anonymous');throw e;}render(o);return;}
+  if(typeof t==='function'){
+    var o;
+    try{ if(isKlasse(t)){var inst=new t(p);inst.props=p;if(!inst.state)inst.state={};o=inst.render();} else {o=t(p);} }
+    catch(e){if(!e.__comp)e.__comp=(t.name||'Anonymous');throw e;}
+    render(o);return;
+  }
   if(p.children!==undefined)render(p.children);
 }
-var R={createElement:createElement,Fragment:Fragment,useState:useState,useEffect:useEffect,useLayoutEffect:useLayoutEffect,useRef:useRef,useMemo:useMemo,useCallback:useCallback,useContext:useContext,useReducer:useReducer,useId:useId,
+function Component(props){this.props=props;this.state={};}
+Component.prototype.isReactComponent={};
+Component.prototype.setState=function(){};Component.prototype.forceUpdate=function(){};
+function PureComponent(props){Component.call(this,props);}
+PureComponent.prototype=Object.create(Component.prototype);
+var R={createElement:createElement,Fragment:Fragment,Component:Component,PureComponent:PureComponent,
+createContext:function(v){return{Provider:function(p){return p&&p.children||null;},Consumer:function(){return null;},_v:v};},
+createRef:function(){return{current:null};},cloneElement:function(e){return e;},isValidElement:function(e){return !!(e&&e.__el);},
+useImperativeHandle:function(){},useSyncExternalStore:function(s,g){return g&&g();},useTransition:function(){return[false,function(f){f&&f();}];},useDeferredValue:function(v){return v;},useState:useState,useEffect:useEffect,useLayoutEffect:useLayoutEffect,useRef:useRef,useMemo:useMemo,useCallback:useCallback,useContext:useContext,useReducer:useReducer,useId:useId,
 Suspense:function Suspense(p){return(p&&p.children)||null;},lazy:function(){return function Lazy(){return null;};},memo:function(c){return c;},forwardRef:function(c){return function Fwd(p){return c(p,{current:null});};},StrictMode:function StrictMode(p){return(p&&p.children)||null;},
 Children:{map:function(c,f){return Array.isArray(c)?c.map(f):(c==null?c:[f(c,0)]);},toArray:function(c){return Array.isArray(c)?c:(c==null?[]:[c]);},count:function(c){return Array.isArray(c)?c.length:(c==null?0:1);},only:function(c){return c;}}};
 R.__render=render; globalThis.__SMOKE_REACT=R; module.exports=R; module.exports.default=R;
@@ -52,7 +66,7 @@ const stubs = {
     const to = (ns) => (a) => ({ path: a.path, namespace: ns });
     b.onResolve({ filter: /^react$/ }, to("shim"));
     b.onResolve({ filter: /^react-dom(\/.*)?$/ }, to("proxy"));
-    b.onResolve({ filter: /^(lucide-react|maplibre-gl|dexie|recharts|three|d3|chart\.js|papaparse)$/ }, to("proxy"));
+    b.onResolve({ filter: /^(lucide-react|maplibre-gl|dexie|recharts|three|d3|chart\.js|papaparse|react-simple-maps|d3-geo|d3-scale|topojson-client|opening_hours)$/ }, to("proxy"));
     b.onResolve({ filter: /^virtual:pwa-register\/react$/ }, to("pwa"));
     b.onResolve({ filter: /^virtual:/ }, to("proxy"));
     b.onResolve({ filter: /\.(css|scss|sass|less)$/ }, to("empty"));
@@ -108,6 +122,22 @@ let entries = discover();
 if (only.length) entries = entries.filter((e) => only.some((a) => e.toLowerCase().includes(a.toLowerCase())));
 setupEnv();
 
+/* Realistische Platzhalter-Props. Vorher wurde ein Proxy übergeben, den createElement
+   beim Kopieren verwarf – die Komponenten bekamen faktisch nichts und meldeten
+   TypeErrors, die es in der App nicht gibt. */
+const leer = () => {};
+const TESTPROPS = {
+  trips: [], items: [], spots: [], wishlist: [], dayList: [], list: [], touren: [], ideen: 0,
+  visited: {}, regions: {}, visitedRegions: {}, wishRegions: {}, wetter: null, geojson: null,
+  trip: { id: "t", name: "Test", items: [], days: [], start: "", end: "" },
+  name: "", hoehe: "300px", art: "fuss", selectedId: null, active: null,
+  onAdd: leer, onChange: leer, onClose: leer, onSelect: leer, onOpen: leer, onApply: leer,
+  onPatch: leer, onRemove: leer, onBack: leer, onGo: leer, onCreate: leer, onCreateTrip: leer,
+  onAddToTrip: leer, onOpenTrip: leer, onCreateTripFromWish: leer, onUpdateDays: leer, onMoveDay: leer,
+  onDragStart: leer, onAddMany: leer, setWishlist: leer, setVisited: leer, setRegions: leer,
+  setVisitedRegions: leer, setWishRegions: leer, setHomeTab: leer, setToolKey: leer,
+};
+
 const results = [];
 for (const full of entries) {
   const rel = full.slice(SRC.length + 1);
@@ -123,7 +153,7 @@ for (const full of entries) {
     const mod = require(outfile);
     const R = globalThis.__SMOKE_REACT;
     if (typeof mod.default !== "function") { results.push({ rel, ok:false, phase:"export", name:"", msg:"default export ist keine Komponente" }); continue; }
-    R.__render(R.createElement(mod.default, universal));
+    R.__render(R.createElement(mod.default, TESTPROPS));
     results.push({ rel, ok:true });
   } catch (e) {
     results.push({ rel, ok:false, phase, comp:e.__comp, name:e.name, msg:e.message });
